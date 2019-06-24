@@ -3,32 +3,20 @@ import pandas as pd
 import tensorflow as tf
 from keras.models import Sequential
 from keras.layers import LSTM, Dense, Dropout
+import matplotlib.pyplot as plt
 
+x_train=np.load("figure_skating/S-LSTM/S_LSTM.npy")
 train=pd.read_csv("training data.csv")
-training_imgs=train['id']
 y_train=train['TES']
-trains=[]
-for i in training_imgs:
-    c = np.load("figure_skating/c3d_feat/"+str(i)+".npy")
-    trains.append(c)
-print("******Finished step 1******")
 
 # 1.define variables/ create placeholders
 d=4096
-d1=1024
 d2=40
 x_batch=tf.placeholder(dtype=tf.float32,shape=(None,d2,d),name='x_batch')
 y_batch=tf.placeholder(dtype=tf.float32,shape=(None,1),name='y_batch')
 
 # 2. weights
-W_s1=tf.Variable(initial_value=np.ones(shape=(d1,d)),dtype=tf.float32,name='W_s1')
-W_s2=tf.Variable(initial_value=np.ones(shape=(d2,d1)),dtype=tf.float32,name='W_s2')
 
-def get_M(F):
-    s_2=tf.tanh(tf.matmul(W_s1,F,transpose_b=True))
-    A=tf.sigmoid(tf.matmul(W_s2,s_2))
-    M=tf.matmul(A,F)
-    return M
 
 # 3. Build the model
 def build_model():
@@ -59,26 +47,20 @@ loss=tf.losses.mean_squared_error(y_batch,y_pred)
 optimizer=tf.train.AdamOptimizer().minimize(loss)
 
 
-cache=[]
-epoch_num=10
+epoch_num=250
+loss_cache=[]
 with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
-    for i in range(len(trains)):
-        M = get_M(trains[i])
-        cache.append(M)
-        if i%10==0:
-            print("Finished transfer of {}/400".format(i))
-    print("******Finished step 2******")
-    cache=tf.convert_to_tensor(cache,dtype=tf.float32)
-    cache=cache.eval()
-    np.save("cache.npy",cache)
-
     for i in range(epoch_num):
-        x_train_batch,y_train_batch=sample_data_batch(cache,y_train,b_size=16)
+        x_train_batch,y_train_batch=sample_data_batch(x_train,y_train,b_size=32)
         feed_dict={x_batch:x_train_batch,y_batch:y_train_batch}
         _,Loss=sess.run([optimizer,loss],feed_dict)
 
-        if i%2==0:
+        if i%10==0:
             print("Epoch {}: mse={}".format(i,Loss))
+            loss_cache.append(Loss)
 
-    # model.save("S-LSTM model.h5")
+    model.save("S-LSTM model.h5")
+
+plt.plot(range(0,250,10),loss_cache)
+plt.show()
