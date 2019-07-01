@@ -1,16 +1,23 @@
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow.contrib.layers import conv1d, dropout, fully_connected
+from tensorflow.contrib.layers import conv1d, dropout, fully_connected, l2_regularizer
 from skip_rnn_cells import SkipLSTMCell
 from keras.models import Sequential
 from keras.layers import LSTM, Dense, Dropout
 import matplotlib.pyplot as plt
 
-transfered_x=np.load("figure_skating/S_LSTM.npy")
+
+d=4096
+d1=40
+d2=496
+batch_size=20
+
+
+transfered_x_train=np.load("figure_skating/train_converted_data.npy")
 train=pd.read_csv("figure_skating/training data.csv")
 training_imgs=train['id']
-y_train=train['PCS']
+y_train=train['TES']
 x_train=[]
 for i in training_imgs:
     c = np.load("figure_skating/c3d_feat/"+str(i)+".npy")
@@ -19,12 +26,21 @@ for i in training_imgs:
     x_train.append(c)
 print("******Finished step 1******")
 
-# 1. define placeholders
-d=4096
-d1=40
-d2=496
-batch_size=16
+transfered_x_test=np.load("figure_skating/test_converted_data.npy")
+test=pd.read_csv("figure_skating/testing data.csv")
+testing_ings=test['id']
+y_test=test['TES']
+x_test=[]
+for i in testing_ings:
+    c = np.load("figure_skating/c3d_feat/"+str(i)+".npy")
+    frames=c.shape[0]
+    c=c[(frames>>1)-248:(frames>>1)+248,:]
+    x_test.append(c)
+x_test=np.array(x_test).reshape((-1,d2,d))
+y_test=np.array(y_test).reshape((-1,1))
+print("******Finished step 2******")
 
+# 1. define placeholders
 x_s_lstm=tf.placeholder(dtype=tf.float32,shape=(None,d1,d),name='x_s_lstm')
 x_m_lstm=tf.placeholder(dtype=tf.float32,shape=(None,d2,d),name='x_m_lstm')
 y=tf.placeholder(dtype=tf.float32,shape=(None,1),name='y_true')
@@ -52,7 +68,7 @@ with tf.variable_scope("M-LSTM-1",reuse=tf.AUTO_REUSE):
     rnn_outputs_1,_= tf.nn.dynamic_rnn(cell_1, hidden_1, dtype=tf.float32, initial_state=initial_state_1)
     rnn_outputs_1= rnn_outputs_1.h[:,-1,:]
     hidden_2=dropout(inputs=rnn_outputs_1,keep_prob=0.7)
-    output_1=fully_connected(hidden_2,num_outputs=32)
+    output_1=fully_connected(hidden_2,num_outputs=32,weights_regularizer=l2_regularizer(0.01))
 
 # M-LSTM (2)
 with tf.variable_scope("M-LSTM-2",reuse=tf.AUTO_REUSE):
@@ -63,7 +79,7 @@ with tf.variable_scope("M-LSTM-2",reuse=tf.AUTO_REUSE):
     rnn_outputs_2,_= tf.nn.dynamic_rnn(cell_2, hidden_3, dtype=tf.float32,initial_state=initial_state_2)
     rnn_outputs_2= rnn_outputs_2.h[:,-1,:]
     hidden_4=dropout(inputs=rnn_outputs_2,keep_prob=0.7)
-    output_2=fully_connected(hidden_4,num_outputs=32)
+    output_2=fully_connected(hidden_4,num_outputs=32,weights_regularizer=l2_regularizer(0.01))
 
 
 # M-LSTM (3)
@@ -75,12 +91,12 @@ with tf.variable_scope("M-LSTM-3",reuse=tf.AUTO_REUSE):
     rnn_outputs_3,_= tf.nn.dynamic_rnn(cell_3, hidden_5, dtype=tf.float32,initial_state=initial_state_3)
     rnn_outputs_3= rnn_outputs_3.h[:,-1,:]
     hidden_6=dropout(inputs=rnn_outputs_3,keep_prob=0.7)
-    output_3=fully_connected(hidden_6,num_outputs=32)
+    output_3=fully_connected(hidden_6,num_outputs=32,weights_regularizer=l2_regularizer(0.01))
 
 # concat network
 output=tf.concat([output_s,output_1,output_2,output_3],axis=1)
 hidden_7=dropout(output,keep_prob=0.7)
-hidden_8=fully_connected(hidden_7,num_outputs=32)
+hidden_8=fully_connected(hidden_7,num_outputs=32,weights_regularizer=l2_regularizer(0.01))
 y_pred=fully_connected(hidden_8,num_outputs=1,activation_fn=tf.nn.relu)
 
 
@@ -105,18 +121,44 @@ def sample_data_batch(x_train,y_train,transfered_x,b_size):
     return x_sLSTM, train_sample, label_sample
 
 # training process
-epoch_num=400
-loss_cache=[]
+epoch_num=200
+train_loss_cache=[]
+test_loss_cache=[]
 with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
     for epoch in range(epoch_num):
-        x_S_LSTM,x_train_batch,y_train_batch=sample_data_batch(x_train,y_train,transfered_x,batch_size)
+        x_S_LSTM,x_train_batch,y_train_batch=sample_data_batch(x_train,y_train,transfered_x_train,batch_size)
         feed_dict = {x_m_lstm: x_train_batch, y: y_train_batch, x_s_lstm:x_S_LSTM}
         _, Loss= sess.run([optimizer, loss], feed_dict)
 
         if epoch%5==0:
             print("Epoch {}: mse={}".format(epoch,Loss))
-            loss_cache.append(Loss)
+            train_loss_cache.append(Loss)
 
-plt.plot(range(0,400,5),loss_cache,'g-')
+        if epoch%10==0:
+            avg_loss=0
+            feed_dict = {x_m_lstm: x_test[:20], y: y_test[:20],x_s_lstm:transfered_x_test[:20]}
+            Loss = sess.run(loss, feed_dict)
+            avg_loss+=Loss
+            feed_dict = {x_m_lstm: x_test[20:40], y: y_test[20:40],x_s_lstm:transfered_x_test[20:40]}
+            Loss = sess.run(loss, feed_dict)
+            avg_loss += Loss
+            feed_dict = {x_m_lstm: x_test[40:60], y: y_test[40:60],x_s_lstm:transfered_x_test[40:60]}
+            Loss = sess.run(loss, feed_dict)
+            avg_loss += Loss
+            feed_dict = {x_m_lstm: x_test[60:80], y: y_test[60:80],x_s_lstm:transfered_x_test[60:80]}
+            Loss = sess.run(loss, feed_dict)
+            avg_loss += Loss
+            feed_dict = {x_m_lstm: x_test[80:], y: y_test[80:],x_s_lstm:transfered_x_test[80:]}
+            Loss = sess.run(loss, feed_dict)
+            avg_loss += Loss
+            avg_loss/=5
+            test_loss_cache.append(avg_loss)
+            print("test loss=", avg_loss)
+
+
+plt.plot(range(0,200,5),train_loss_cache,'r-')
+plt.plot(range(0,200,10),test_loss_cache,'g-')
+plt.legend(['train_mse','test_mse'])
+plt.title("S_LSTM+M_LSTM: TES")
 plt.show()
