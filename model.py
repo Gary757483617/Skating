@@ -37,7 +37,7 @@ class conv_lstm(nn.Module):
         input = input.permute(0, 2, 1)
         output = self.lstm(input)
         output, hx, updated_state = split_rnn_outputs('skip_lstm', output)
-        return output[:, -1, :]
+        return output[:, -1, :] 
 
 class Scoring(nn.Module):
     def __init__(self, feature_size):
